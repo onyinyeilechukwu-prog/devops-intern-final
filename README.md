@@ -184,3 +184,35 @@ Query for NGINX requests that did not return 200, after requesting `/missing-pag
 - I believe Promtail is deprecated in favour of Grafana Alloy; the task specifies it.
 - Promtail logged `entry too far behind` for lines dated 14 November on first start. Their source was not identified.
 - Scripts need `bash`, because `dash` has no `pipefail`.
+]633;E;cat <<'EOF'\x0a\x0a## Extension: TLS reverse proxy (`proxy/`)\x0a\x0a`proxy/tls-proxy.nomad.hcl` runs a second NGINX (`nginx:1.27-alpine-slim`) that terminates TLS with a self-signed certificate and forwards requests to the app.\x0a\x0a- A `gen-cert` prestart task creates the certificate and key at deploy time in the job's shared folder, so no key is ever stored in the repo.\x0a- The `proxy` task is registered in Consul as `nginx-proxy`, with an HTTPS check on `/healthz`.\x0a- A Nomad `template` asks Consul where `nginx-app` runs and writes that address into the NGINX config, so the proxy follows the app if it moves.\x0a- The proxy uses the host network, because Consul gives the app's address as `127.0.0.1:<port>`.\x0a\x0a```bash\x0anomad job run proxy/tls-proxy.nomad.hcl\x0a```\x0a\x0aObserved (certificate owner, response status, page lines, then the Consul check):\x0a\x0a```text\x0aEOF\x0a;63e0cf42-2589-4096-bf8c-6b005b918c9a]633;C
+## Extension: TLS reverse proxy (`proxy/`)
+
+`proxy/tls-proxy.nomad.hcl` runs a second NGINX (`nginx:1.27-alpine-slim`) that terminates TLS with a self-signed certificate and forwards requests to the app.
+
+- A `gen-cert` prestart task creates the certificate and key at deploy time in the job's shared folder, so no key is ever stored in the repo.
+- The `proxy` task is registered in Consul as `nginx-proxy`, with an HTTPS check on `/healthz`.
+- A Nomad `template` asks Consul where `nginx-app` runs and writes that address into the NGINX config, so the proxy follows the app if it moves.
+- The proxy uses the host network, because Consul gives the app's address as `127.0.0.1:<port>`.
+
+```bash
+nomad job run proxy/tls-proxy.nomad.hcl
+```
+
+Observed (certificate owner, response status, page lines, then the Consul check):
+
+```text
+*  subject: CN=localhost
+> GET / HTTP/1.1
+< HTTP/1.1 200 OK
+      <p>Name: Onyinye Ilechukwu</p>
+      <p>Assessment date: 2026-11-19</p>
+      <p>Build: 449cd9b7fb5a798daa72c0d0e5dd5ea33c503fb6</p>
+"Status": "passing"
+```
+
+Problems found while building it:
+
+- The first version mounted a certificate folder from the host. Nomad refused with `volumes are not enabled; cannot mount host path`. The certificate is now generated inside the job.
+- The second version started but nothing listened on the host port, because the Docker task also needs `network_mode = "host"`.
+
+Limitations: the certificate is self-signed, valid for 30 days and recreated on every start, so clients need `curl -k`. The `gen-cert` task downloads `openssl` when it runs, so it needs internet access.
